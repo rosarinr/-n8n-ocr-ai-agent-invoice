@@ -1,0 +1,78 @@
+[
+  {
+    "invoiceNumber": null,
+    "date": "19-05-2021",
+    "name": null,
+    "address": null,
+    "taxID": null,
+    "items": [
+      {
+        "itemName": "เหล็กกล่อง 1½ × 1½ (62ฟุต)",
+        "itemQuantity": 1,
+        "unitPrice": "345",
+        "discount": 0,
+        "subtotal": 345
+      },
+      {
+        "itemName": "ปะเก็นยาง 1½\"",
+        "itemQuantity": 1,
+        "unitPrice": "70",
+        "discount": 0,
+        "subtotal": 70
+      },
+      {
+        "itemName": "12/20 4'",
+        "itemQuantity": 1,
+        "unitPrice": "80",
+        "discount": 0,
+        "subtotal": 80
+      },
+      {
+        "itemName": "หน้ากากอนามัย รุ่นท้า",
+        "itemQuantity": 1,
+        "unitPrice": "990",
+        "discount": 0,
+        "subtotal": 9430
+      },
+      {
+        "itemName": "เหล็กรางน้ำ 3\" x 1½\"",
+        "itemQuantity": 1,
+        "unitPrice": "620",
+        "discount": 0,
+        "subtotal": 620
+      }
+    ],
+    "total": 10545,
+    "VAT": 0,
+    "grandTotal": 3845,
+    "validation": false,
+    "errorDetail": [
+      {
+        "error": "ยอดรวมสินค้า ('หน้ากากอนามัย รุ่นท้า') ไม่ถูกต้อง",
+        "expected": 990,
+        "actual": 9430
+      }
+    ]
+  },
+  {
+    "invoiceNumber": "RC928",
+    "date": "16-11-2020",
+    "name": "บริษัท ไอแท็กซ์ อินคอร์ปอเรชั่น จำกัด",
+    "address": "1872 ถนนเหรียญทอง แขวงทรัพย์ เขตสิน กรุงเทพมหานคร 10118",
+    "taxID": "0123456587698",
+    "items": [
+      {
+        "itemName": "ซื้อโค้กแลดเหรียญทอง",
+        "itemQuantity": 1,
+        "unitPrice": "934.58",
+        "discount": 0,
+        "subtotal": 934.58
+      }
+    ],
+    "total": 934.58,
+    "VAT": 65.42,
+    "grandTotal": 1000,
+    "validation": true,
+    "errorDetail": null
+  }
+]
