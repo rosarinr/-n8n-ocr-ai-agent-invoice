@@ -1,0 +1,251 @@
+{
+  "name": "ocr + ai agent",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "upload invoice",
+        "formDescription": "upload invoice in image or pdf",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Invoice (Accept Files Types: .jpg, .png, .pdf, .jpeg)",
+              "fieldType": "file",
+              "acceptFileTypes": ".jpg, .png, .pdf, .jpeg",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        304,
+        32
+      ],
+      "id": "b719eb9c-b828-4dda-afd1-812058fadf4c",
+      "name": "On form submission",
+      "webhookId": "fc6ce69e-4b24-47a1-9756-242ec31a45a2",
+      "alwaysOutputData": false,
+      "executeOnce": false,
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  let output = item.json.output\n  let raw = JSON.stringify(output);\n\n  // Step 1: Remove backticks if present\n  raw = raw.trim();\n  if (raw.startsWith(\"```json\")) {\n    raw = raw.replace(/^```json\\s*/, '').replace(/```$/, '').trim();\n  } else if (raw.startsWith(\"```\")) {\n    raw = raw.replace(/^```\\s*/, '').replace(/```$/, '').trim();\n  }\n\n  // Step 2: Find full JSON block from first { to last }\n  const start = raw.indexOf('{');\n  const end = raw.lastIndexOf('}');\n  if (start === -1 || end === -1 || end <= start) {\n    results.push({\n      json: {\n        error: \"No valid JSON block found\",\n        raw_output: raw\n      }\n    });\n    continue;\n  }\n\n  let jsonCandidate = raw.substring(start, end + 1).trim();\n\n  // Step 3: Unescape characters\n  jsonCandidate = jsonCandidate\n    .replace(/\\\\n/g, '')\n    .replace(/\\\\t/g, '')\n    .replace(/\\\\\"/g, '\"')\n    .replace(/\\\\'/g, \"'\")\n    .replace(/\\\\\\\\/g, '\\\\');\n\n  // Step 4: Parse JSON safely\n  try {\n    let parsed = JSON.parse(jsonCandidate);\n\n    // Only double-parse if it looks like stringified JSON\n    if (typeof parsed === \"string\" && parsed.trim().startsWith('{') && parsed.trim().endsWith('}')) {\n      parsed = JSON.parse(parsed);\n    }\n\n    results.push({ json: parsed });\n  } catch (e) {\n    results.push({\n      json: {\n        error: \"JSON parsing failed\",\n        raw_output: raw,\n        attempted_extraction: jsonCandidate,\n        message: e.message\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        32
+      ],
+      "id": "758c0c32-8710-49d4-a97c-89111e6dffa7",
+      "name": "Change output to JSON"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Helper function สำหรับการปัดเศษตัวเลขให้เหลือ 2 ตำแหน่งทศนิยม\n// เพื่อหลีกเลี่ยงข้อผิดพลาดของ Floating Point ในการคำนวณเงิน\nconst round = (num) => {\n    if (typeof num !== 'number' || isNaN(num)) return 0;\n    return Math.round((num + Number.EPSILON) * 100) / 100;\n};\n\n// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const invoice of $input.all()) {\nconst items = invoice.json.items\nlet calculatedTotal = 0\nconst errorDetail = [];\nlet isValid = true;\nfor (const lineItem of items) {\n\n    // จัดการค่าที่อาจเป็น string หรือ null/undefined ก่อนแปลง\n    const qty = round(typeof lineItem.itemQuantity === 'string' ? parseFloat(lineItem.itemQuantity) : lineItem.itemQuantity);\n    const unitPrice = round(typeof lineItem.unitPrice === 'string' ? parseFloat(lineItem.unitPrice) : lineItem.unitPrice);\n    const discount = round(lineItem.discount || 0);\n    const actualSubtotal = round(lineItem.subtotal);\n\n        // ข้ามการตรวจสอบหาก ราคาต่อหน่วยไม่มีข้อมูล\n    if (isNaN(unitPrice)) {\n      calculatedTotal += actualSubtotal\n        continue;\n    }\n\n    // คำนวณยอดรวมย่อยที่คาดหวัง: (จำนวน * ราคาต่อหน่วย) - ส่วนลด\n    const calculatedSubtotal = round((qty * unitPrice) - discount);\n    calculatedTotal += calculatedSubtotal\n\n    // ตรวจสอบความถูกต้อง (ยอมให้มีข้อผิดพลาดได้ไม่เกิน 0.01 สำหรับสกุลเงิน)\n    if (Math.abs(calculatedSubtotal - actualSubtotal) > 0.01) {\n        errorDetail.push({\n            error: `ยอดรวมสินค้า ('${lineItem.itemName}') ไม่ถูกต้อง`,\n            expected: calculatedSubtotal,\n            actual: actualSubtotal,\n    })\n     isValid = false\n}\n} // end of items\n  \n  // error detect in lineItem(s)\nif (!isValid) {\n    invoice.json.validation = false;\n    invoice.json.errorDetail = errorDetail;\n    continue\n}\n\n// ตรวจสอบยอดรวมหลักก่อน VAT (Subtotal)\nconst actualTotal = round(invoice.json.total);\n\nif (Math.abs(calculatedTotal - actualTotal) > 0.01) {\n    errorDetail.push({\n        error: `ยอดรวมก่อน VAT ไม่ถูกต้อง`,\n        expected: calculatedTotal,\n        actual: actualTotal\n    });\n    isValid = false;\n    invoice.json.validation = false;\n    invoice.json.errorDetail = errorDetail;\n    continue\n}\n\n  // ตรวจสอบการคำนวณ VAT (7% ของยอดรวมหลัก)\nconst vatRate = 0.07;\nconst actualVAT = round(invoice.json.VAT);\n\n    // ถ้า actualVAT = 0 แปลว่าร้านนั้นไม่ต้องคิด VAT 7%\n  if (actualVAT > 0) {\n  const expectedVAT = round(calculatedTotal * vatRate);\n  if (Math.abs(expectedVAT - actualVAT) > 0.01) {\n    errorDetail.push({\n        error: `ยอด VAT (7%) ไม่ถูกต้อง`,\n        expected: expectedVAT,\n        actual: actualVAT,\n    });\n    isValid = false;\n    invoice.json.validation = false;\n    invoice.json.errorDetail = errorDetail;\n    continue\n}\n  }\n\n\n\n// ตรวจสอบ Grand Total (ยอดรวมหลัก + VAT)\nconst expectedGrandTotal = round(calculatedTotal + actualVAT);\nconst actualGrandTotal = round(invoice.json.grandTotal);\n\nif (Math.abs(expectedGrandTotal - actualGrandTotal) > 0.01) {\n    errorDetail.push({\n        error: `Grand Total ไม่ถูกต้อง`,\n        expected: expectedGrandTotal,\n        actual: actualGrandTotal,\n    });\n    isValid = false;\n    invoice.json.validation = false;\n    invoice.json.errorDetail = errorDetail;\n    continue\n}\n\n// no error and valid\ninvoice.json.validation = isValid;\n\n\n  \n}\n\nreturn $input.all();\n\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1776,
+        32
+      ],
+      "id": "c7c8a04a-66f8-49ef-8ca7-5406ef573e5a",
+      "name": "Validation"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "$binary",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        528,
+        32
+      ],
+      "id": "faf2eb62-633a-4a69-97cf-e459b4025f2b",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.content.parts[0].text }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Analyze the following data from a invoice or receipt.\n\n- You must respond ONLY with valid raw rendered JSON.\n\n- Do NOT include the word \"json\".\n\n- Do NOT include the word \"```json\".\n\n- Do NOT use triple backticks or markdown formatting.\n\n- Do NOT wrap the response in any key like \"output\".\n\n- Do NOT write anything starting at output directly start with valid root-level JSON.\n\n- Only respond with a valid, root-level JSON object.\n\n- Do NOT skip any line item. \n\n- Extract ALL items from the invoice's list into the items array. Do not skip any item.\n\n{\n\"invoiceNumber\": \"เลขที่ / เลขที่ใบเสร็จรับเงิน / Invoice/receipt number / Invoice/receipt ID\"\n\"date\": \"วันที่ / invoice date/date format dd-mm-yyyy (B.E. converted to A.D.)\",\n\"name\": \"ชื่อผู้ขาย / seller name / from / name / ชื่อของบริษัทที่ออกใบเสร็จ/ใบกำกับภาษี\",\n\"address\": \"seller's address / ที่อยู่ / ทีอยู่ผู้ขาย\",\n\"taxID\": \"Taxpayer Identification No / เลขประจำตัวผู้เสียภาษีของผู้ขาย \"\n\"items\": [\n{\n\"itemName\": \"ชื่อสินค้า\",\n\"itemQuantity\": จำนวน (numeric),\n\"unitPrice\": \"ราคาต่อหน่วย / หน่วยละ (ignore currency unit and empty string if not available)\",\n\"discount\": ส่วนลด (numeric, 0 if none),\n\"subtotal\": ยอดรวม / subtotal (numeric)\n}\n// ... all other items ...\n],\n\"total\": \"ยอดรวม / total ของสินค้าทั้งหมดก่อนหักส่วนส่วนลด / คิดvat (numeric)\",\n\"VAT\": \"ภาษีมูลค่าเพิ่ม / VAT (numeric, 0 if none)\",\n\"grandTotal\": \"ราคารวม / ยอดรวมทั้งหมด (numeric)\",\n\"validation\": null,\n\"errorDetail\": null\n}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        32
+      ],
+      "id": "3e176ee0-a3f3-4624-9114-c9e15057f390",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const oldKey = Object.keys($input.item.binary)[0];\nconst binaryData = $input.item.binary[oldKey];\nreturn {\n  json: $input.item.json,\n  binary: { invoice: binaryData }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        752,
+        32
+      ],
+      "id": "2bdd2259-d653-491b-ab21-f1031335565e",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        304
+      ],
+      "id": "13b4c39c-3c36-44a7-acf0-58f7899fd07f",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "tWv5Lbq8TaGKCIq0",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "text": "what is in this image",
+        "inputType": "binary",
+        "binaryPropertyName": "invoice",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        976,
+        32
+      ],
+      "id": "c646f865-26e3-4ecb-8f86-e1db7ead131e",
+      "name": "Analyze an image",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "tWv5Lbq8TaGKCIq0",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Change output to JSON": {
+      "main": [
+        [
+          {
+            "node": "Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation": {
+      "main": [
+        []
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Analyze an image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze an image": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Change output to JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b78139ef-6a90-46a3-9890-955fa3b07b79",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "610b3d2ca518cf62e5b0f1ae8741e3831320201bba86add075142bc40effc94c"
+  },
+  "id": "fC4vMKKkhSP0Zcyd",
+  "tags": []
+}
